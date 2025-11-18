@@ -19,49 +19,17 @@ app.post('/mix', async (req, res) => {
   const videoPath = '/tmp/video.mp4';
   const audioPath = '/tmp/audio.mp3';
   const outputPath = '/tmp/output.mp4';
-  const srtPath = '/tmp/subtitles.srt';
 
   try {
     // Download files
     await downloadFile(videoUrl, videoPath);
     await downloadFile(audioUrl, audioPath);
 
-    // Create SRT subtitle file
-    const words = script ? script.split(' ') : [];
-    const wordsPerSegment = Math.ceil(words.length / 12);
-    
-    let srtContent = '';
-    for (let i = 0; i < 12; i++) {
-      const start = i * wordsPerSegment;
-      const end = Math.min((i + 1) * wordsPerSegment, words.length);
-      const text = words.slice(start, end).join(' ');
-      
-      if (text) {
-        const startTime = i * 5;
-        const endTime = (i + 1) * 5;
-        
-        const startHours = Math.floor(startTime / 3600);
-        const startMins = Math.floor((startTime % 3600) / 60);
-        const startSecs = startTime % 60;
-        
-        const endHours = Math.floor(endTime / 3600);
-        const endMins = Math.floor((endTime % 3600) / 60);
-        const endSecs = endTime % 60;
-        
-        srtContent += `${i + 1}\n`;
-        srtContent += `${String(startHours).padStart(2, '0')}:${String(startMins).padStart(2, '0')}:${String(startSecs).padStart(2, '0')},000 --> `;
-        srtContent += `${String(endHours).padStart(2, '0')}:${String(endMins).padStart(2, '0')}:${String(endSecs).padStart(2, '0')},000\n`;
-        srtContent += `${text}\n\n`;
-      }
-    }
-    
-    fs.writeFileSync(srtPath, srtContent);
-    console.log('SRT file created with proper timing');
+    console.log('Files downloaded');
 
-    // Mix audio first, then burn in subtitles in a second pass
+    // Mix audio first
     const tempOutputPath = '/tmp/temp_with_audio.mp4';
     
-    // Step 1: Mix audio
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(videoPath)
@@ -89,17 +57,17 @@ app.post('/mix', async (req, res) => {
         .run();
     });
 
-    // Step 2: Burn in subtitles with MUCH more visible styling
+    // Add GIANT TEST SUBTITLE that's impossible to miss
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(tempOutputPath)
         .outputOptions([
-          `-vf subtitles=${srtPath}:force_style='FontName=Arial,Fontsize=32,Bold=1,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BackColour=&H80000000&,BorderStyle=4,Outline=3,Shadow=2,MarginV=40'`,
+          `-vf "drawtext=text='TEST SUBTITLE':fontsize=72:fontcolor=yellow:box=1:boxcolor=red@0.8:boxborderw=5:x=(w-text_w)/2:y=(h-text_h)/2"`,
           '-c:a copy'
         ])
         .output(outputPath)
         .on('end', () => {
-          console.log('Subtitle burn-in complete with enhanced visibility');
+          console.log('Giant test subtitle added - should be impossible to miss!');
           fs.unlinkSync(tempOutputPath);
           resolve();
         })
