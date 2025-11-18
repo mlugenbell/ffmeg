@@ -27,43 +27,46 @@ app.post('/mix', async (req, res) => {
 
     // Split script into 5-second segments for captions
     const words = script ? script.split(' ') : [];
-    const wordsPerSegment = Math.ceil(words.length / 12); // 12 segments of 5 seconds each
-    let subtitles = '';
+    const wordsPerSegment = Math.ceil(words.length / 12);
     
+    // Build drawtext filters for each segment
+    let textFilters = [];
     for (let i = 0; i < 12; i++) {
       const start = i * wordsPerSegment;
       const end = Math.min((i + 1) * wordsPerSegment, words.length);
-      const text = words.slice(start, end).join(' ');
+      const text = words.slice(start, end).join(' ').replace(/'/g, "\\'").replace(/:/g, '\\:');
       
       if (text) {
         const startTime = i * 5;
         const endTime = (i + 1) * 5;
-        subtitles += `${i + 1}\n`;
-        subtitles += `00:00:${String(startTime).padStart(2, '0')},000 --> 00:00:${String(endTime).padStart(2, '0')},000\n`;
-        subtitles += `${text}\n\n`;
+        
+        textFilters.push(
+          `drawtext=text='${text}':fontsize=32:fontcolor=white:` +
+          `borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-100:` +
+          `enable='between(t,${startTime},${endTime})'`
+        );
       }
     }
-    
-    // Write subtitle file
-    const srtPath = '/tmp/subtitles.srt';
-    fs.writeFileSync(srtPath, subtitles);
 
-    // Mix with ffmpeg and add subtitles
+    const complexFilter = [
+      '[0:a]volume=0.15[bg]',
+      '[1:a]volume=1.0[vo]',
+      '[bg][vo]amix=inputs=2:duration=first[a]',
+      `[0:v]${textFilters.join(',')}[v]`
+    ];
+
+    // Mix with ffmpeg
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(videoPath)
         .input(audioPath)
-        .complexFilter([
-          '[0:a]volume=0.15[bg]',
-          '[1:a]volume=1.0[vo]',
-          '[bg][vo]amix=inputs=2:duration=first[a]',
-          '[0:v]subtitles=' + srtPath + ':force_style=\'Fontsize=24,PrimaryColour=&HFFFFFF,OutlineColour=&H000000,BorderStyle=3,Outline=2,Shadow=1,MarginV=50\'[v]'
-        ])
+        .complexFilter(complexFilter)
         .outputOptions([
           '-map [v]',
           '-map [a]',
           '-c:v libx264',
-          '-c:a aac'
+          '-c:a aac',
+          '-preset ultrafast'
         ])
         .output(outputPath)
         .on('end', resolve)
@@ -74,6 +77,7 @@ app.post('/mix', async (req, res) => {
     // Send file back
     res.sendFile(outputPath);
   } catch (error) {
+    console.error('Error:', error);
     res.status(500).json({ error: error.message });
   }
 });
