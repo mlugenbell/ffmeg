@@ -34,16 +34,26 @@ app.post('/mix', async (req, res) => {
     for (let i = 0; i < 12; i++) {
       const start = i * wordsPerSegment;
       const end = Math.min((i + 1) * wordsPerSegment, words.length);
-      const text = words.slice(start, end).join(' ').replace(/'/g, "\\'").replace(/:/g, '\\:');
+      let text = words.slice(start, end).join(' ');
+      
+      // Escape special characters for ffmpeg
+      text = text
+        .replace(/\\/g, '\\\\')  // Escape backslashes first
+        .replace(/'/g, "'\\\\\\\\''")  // Escape single quotes
+        .replace(/:/g, '\\:')  // Escape colons
+        .replace(/—/g, '-')  // Replace em-dash with regular dash
+        .replace(/'/g, "'")  // Replace smart quotes
+        .replace(/"/g, '"')  // Replace smart quotes
+        .replace(/'/g, "'");  // Replace smart quotes
       
       if (text) {
         const startTime = i * 5;
         const endTime = (i + 1) * 5;
         
         textFilters.push(
-          `drawtext=text='${text}':fontsize=32:fontcolor=white:` +
-          `borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-100:` +
-          `enable='between(t,${startTime},${endTime})'`
+          `drawtext=text='${text}':fontsize=28:fontcolor=white:` +
+          `borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-80:` +
+          `enable='between(t\\,${startTime}\\,${endTime})'`
         );
       }
     }
@@ -54,6 +64,8 @@ app.post('/mix', async (req, res) => {
       '[bg][vo]amix=inputs=2:duration=first[a]',
       `[0:v]${textFilters.join(',')}[v]`
     ];
+
+    console.log('Starting ffmpeg with captions...');
 
     // Mix with ffmpeg
     await new Promise((resolve, reject) => {
@@ -69,8 +81,14 @@ app.post('/mix', async (req, res) => {
           '-preset ultrafast'
         ])
         .output(outputPath)
-        .on('end', resolve)
-        .on('error', reject)
+        .on('end', () => {
+          console.log('FFmpeg complete');
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error('FFmpeg error:', err);
+          reject(err);
+        })
         .run();
     });
 
