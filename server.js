@@ -57,6 +57,8 @@ app.post('/mix', async (req, res) => {
     
     fs.writeFileSync(srtPath, srtContent);
     console.log('SRT file created');
+    console.log('SRT content:', srtContent);
+    console.log('Script received:', script);
 
     // Mix audio first, then burn in subtitles in a second pass
     const tempOutputPath = '/tmp/temp_with_audio.mp4';
@@ -100,7 +102,6 @@ app.post('/mix', async (req, res) => {
         .output(outputPath)
         .on('end', () => {
           console.log('Subtitle burn-in complete');
-          // Clean up temp file
           fs.unlinkSync(tempOutputPath);
           resolve();
         })
