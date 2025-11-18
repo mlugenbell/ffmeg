@@ -56,9 +56,7 @@ app.post('/mix', async (req, res) => {
     }
     
     fs.writeFileSync(srtPath, srtContent);
-    console.log('SRT file created');
-    console.log('SRT content:', srtContent);
-    console.log('Script received:', script);
+    console.log('SRT file created with proper timing');
 
     // Mix audio first, then burn in subtitles in a second pass
     const tempOutputPath = '/tmp/temp_with_audio.mp4';
@@ -91,17 +89,17 @@ app.post('/mix', async (req, res) => {
         .run();
     });
 
-    // Step 2: Burn in subtitles
+    // Step 2: Burn in subtitles with MUCH more visible styling
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(tempOutputPath)
         .outputOptions([
-          `-vf subtitles=${srtPath}:force_style='Fontsize=24,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=3,Outline=2,Shadow=1,MarginV=50'`,
+          `-vf subtitles=${srtPath}:force_style='FontName=Arial,Fontsize=32,Bold=1,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BackColour=&H80000000&,BorderStyle=4,Outline=3,Shadow=2,MarginV=40'`,
           '-c:a copy'
         ])
         .output(outputPath)
         .on('end', () => {
-          console.log('Subtitle burn-in complete');
+          console.log('Subtitle burn-in complete with enhanced visibility');
           fs.unlinkSync(tempOutputPath);
           resolve();
         })
