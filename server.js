@@ -19,74 +19,93 @@ app.post('/mix', async (req, res) => {
   const videoPath = '/tmp/video.mp4';
   const audioPath = '/tmp/audio.mp3';
   const outputPath = '/tmp/output.mp4';
+  const srtPath = '/tmp/subtitles.srt';
 
   try {
     // Download files
     await downloadFile(videoUrl, videoPath);
     await downloadFile(audioUrl, audioPath);
 
-    // Split script into 5-second segments for captions
+    // Create SRT subtitle file
     const words = script ? script.split(' ') : [];
     const wordsPerSegment = Math.ceil(words.length / 12);
     
-    // Build drawtext filters for each segment
-    let textFilters = [];
+    let srtContent = '';
     for (let i = 0; i < 12; i++) {
       const start = i * wordsPerSegment;
       const end = Math.min((i + 1) * wordsPerSegment, words.length);
-      let text = words.slice(start, end).join(' ');
-      
-      // Escape special characters for ffmpeg
-      text = text
-        .replace(/\\/g, '\\\\')  // Escape backslashes first
-        .replace(/'/g, "'\\\\\\\\''")  // Escape single quotes
-        .replace(/:/g, '\\:')  // Escape colons
-        .replace(/—/g, '-')  // Replace em-dash with regular dash
-        .replace(/'/g, "'")  // Replace smart quotes
-        .replace(/"/g, '"')  // Replace smart quotes
-        .replace(/'/g, "'");  // Replace smart quotes
+      const text = words.slice(start, end).join(' ');
       
       if (text) {
         const startTime = i * 5;
         const endTime = (i + 1) * 5;
         
-        textFilters.push(
-          `drawtext=text='${text}':fontsize=28:fontcolor=white:` +
-          `borderw=2:bordercolor=black:x=(w-text_w)/2:y=h-80:` +
-          `enable='between(t\\,${startTime}\\,${endTime})'`
-        );
+        const startHours = Math.floor(startTime / 3600);
+        const startMins = Math.floor((startTime % 3600) / 60);
+        const startSecs = startTime % 60;
+        
+        const endHours = Math.floor(endTime / 3600);
+        const endMins = Math.floor((endTime % 3600) / 60);
+        const endSecs = endTime % 60;
+        
+        srtContent += `${i + 1}\n`;
+        srtContent += `${String(startHours).padStart(2, '0')}:${String(startMins).padStart(2, '0')}:${String(startSecs).padStart(2, '0')},000 --> `;
+        srtContent += `${String(endHours).padStart(2, '0')}:${String(endMins).padStart(2, '0')}:${String(endSecs).padStart(2, '0')},000\n`;
+        srtContent += `${text}\n\n`;
       }
     }
+    
+    fs.writeFileSync(srtPath, srtContent);
+    console.log('SRT file created');
 
-    const complexFilter = [
-      '[0:a]volume=0.15[bg]',
-      '[1:a]volume=1.0[vo]',
-      '[bg][vo]amix=inputs=2:duration=first[a]',
-      `[0:v]${textFilters.join(',')}[v]`
-    ];
-
-    console.log('Starting ffmpeg with captions...');
-
-    // Mix with ffmpeg
+    // Mix audio first, then burn in subtitles in a second pass
+    const tempOutputPath = '/tmp/temp_with_audio.mp4';
+    
+    // Step 1: Mix audio
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(videoPath)
         .input(audioPath)
-        .complexFilter(complexFilter)
-        .outputOptions([
-          '-map [v]',
-          '-map [a]',
-          '-c:v libx264',
-          '-c:a aac',
-          '-preset ultrafast'
+        .complexFilter([
+          '[0:a]volume=0.15[bg]',
+          '[1:a]volume=1.0[vo]',
+          '[bg][vo]amix=inputs=2:duration=first[a]'
         ])
-        .output(outputPath)
+        .outputOptions([
+          '-map 0:v',
+          '-map [a]',
+          '-c:v copy',
+          '-c:a aac'
+        ])
+        .output(tempOutputPath)
         .on('end', () => {
-          console.log('FFmpeg complete');
+          console.log('Audio mixing complete');
           resolve();
         })
         .on('error', (err) => {
-          console.error('FFmpeg error:', err);
+          console.error('Audio mix error:', err);
+          reject(err);
+        })
+        .run();
+    });
+
+    // Step 2: Burn in subtitles
+    await new Promise((resolve, reject) => {
+      ffmpeg()
+        .input(tempOutputPath)
+        .outputOptions([
+          `-vf subtitles=${srtPath}:force_style='Fontsize=24,PrimaryColour=&HFFFFFF&,OutlineColour=&H000000&,BorderStyle=3,Outline=2,Shadow=1,MarginV=50'`,
+          '-c:a copy'
+        ])
+        .output(outputPath)
+        .on('end', () => {
+          console.log('Subtitle burn-in complete');
+          // Clean up temp file
+          fs.unlinkSync(tempOutputPath);
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error('Subtitle error:', err);
           reject(err);
         })
         .run();
