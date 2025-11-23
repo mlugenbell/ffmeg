@@ -1,9 +1,11 @@
-FROM node:18-alpine
+FROM ubuntu:22.04
 
-RUN apk add --no-cache \
+RUN apt-get update && apt-get install -y \
     ffmpeg \
-    fontconfig \
-    ttf-dejavu
+    nodejs \
+    npm \
+    fonts-liberation \
+    fontconfig
 
 WORKDIR /app
 
