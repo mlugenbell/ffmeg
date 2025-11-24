@@ -6,6 +6,18 @@ const app = express();
 
 app.use(express.json({ limit: '50mb' }));
 
+// Helper to remove directory (compatible with older Node versions)
+function removeDir(dir) {
+    if (fs.existsSync(dir)) {
+        if (fs.rmSync) {
+            fs.rmSync(dir, { recursive: true, force: true });
+        } else {
+            fs.rmdirSync(dir, { recursive: true });
+        }
+    }
+}
+
+// Helper function to download file
 function downloadFile(url, dest) {
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(dest);
@@ -22,6 +34,7 @@ function downloadFile(url, dest) {
     });
 }
 
+// Main mix endpoint
 app.post('/mix', async (req, res) => {
     const { videoUrl, audioUrl, srtContent } = req.body;
     
@@ -53,7 +66,6 @@ app.post('/mix', async (req, res) => {
         }
 
         console.log('Running ffmpeg...');
-        console.log(ffmpegCommand);
         
         exec(ffmpegCommand, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
             if (error) {
@@ -67,7 +79,7 @@ app.post('/mix', async (req, res) => {
                     exec(fallbackCommand, { maxBuffer: 1024 * 1024 * 10 }, (fallbackError, fallbackStdout, fallbackStderr) => {
                         if (fallbackError) {
                             console.error('Fallback failed:', fallbackStderr);
-                            fs.rmSync(workDir, { recursive: true, force: true });
+                            removeDir(workDir);
                             return res.status(500).json({ error: 'Processing failed', details: fallbackStderr });
                         }
                         
@@ -75,12 +87,12 @@ app.post('/mix', async (req, res) => {
                         const videoBuffer = fs.readFileSync(`${workDir}/output.mp4`);
                         res.set('Content-Type', 'video/mp4');
                         res.send(videoBuffer);
-                        fs.rmSync(workDir, { recursive: true, force: true });
+                        removeDir(workDir);
                     });
                     return;
                 }
                 
-                fs.rmSync(workDir, { recursive: true, force: true });
+                removeDir(workDir);
                 return res.status(500).json({ error: 'Processing failed', details: stderr });
             }
 
@@ -88,18 +100,19 @@ app.post('/mix', async (req, res) => {
             const videoBuffer = fs.readFileSync(`${workDir}/output.mp4`);
             res.set('Content-Type', 'video/mp4');
             res.send(videoBuffer);
-            fs.rmSync(workDir, { recursive: true, force: true });
+            removeDir(workDir);
         });
 
     } catch (error) {
         console.error('Error:', error);
-        fs.rmSync(workDir, { recursive: true, force: true });
+        removeDir(workDir);
         res.status(500).json({ error: 'Processing failed', details: error.message });
     }
 });
 
+// Health check
 app.get('/', (req, res) => {
-    res.json({ status: 'Mixer service v5 - clean SRT implementation' });
+    res.json({ status: 'Mixer service v6 - fixed cleanup for older Node' });
 });
 
 const PORT = process.env.PORT || 3000;
