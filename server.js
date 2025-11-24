@@ -1,13 +1,11 @@
 const express = require('express');
 const { exec } = require('child_process');
 const fs = require('fs');
-const path = require('path');
 const https = require('https');
 const app = express();
 
 app.use(express.json({ limit: '50mb' }));
 
-// Helper function to download file
 function downloadFile(url, dest) {
     return new Promise((resolve, reject) => {
         const file = fs.createWriteStream(dest);
@@ -24,7 +22,6 @@ function downloadFile(url, dest) {
     });
 }
 
-// Main mix endpoint
 app.post('/mix', async (req, res) => {
     const { videoUrl, audioUrl, srtContent } = req.body;
     
@@ -36,68 +33,58 @@ app.post('/mix', async (req, res) => {
     fs.mkdirSync(workDir, { recursive: true });
 
     try {
-        console.log('Downloading video...');
+        console.log('Downloading files...');
         await downloadFile(videoUrl, `${workDir}/video.mp4`);
-        
-        console.log('Downloading audio...');
         await downloadFile(audioUrl, `${workDir}/audio.mp3`);
 
-        // Save SRT content if provided
-        let srtPath = null;
-        if (srtContent) {
-            srtPath = `${workDir}/subtitles.srt`;
-            fs.writeFileSync(srtPath, srtContent, 'utf8');
-            console.log('SRT file created');
-        }
-
-        // Build ffmpeg command
         let ffmpegCommand;
         
-        if (srtPath && fs.existsSync(srtPath)) {
-            // With subtitles using proper SRT file
-            console.log('Processing with SRT subtitles...');
-            ffmpegCommand = `ffmpeg -i ${workDir}/video.mp4 -i ${workDir}/audio.mp3 -vf "subtitles=${srtPath}:force_style='FontName=Arial,FontSize=24,PrimaryColour=&Hffffff&,OutlineColour=&H000000&,BorderStyle=3,Outline=2,Shadow=1,Alignment=2,MarginV=40'" -map 0:v:0 -map 1:a:0 -c:v libx264 -preset fast -crf 23 -c:a aac -b:a 128k ${workDir}/output.mp4`;
+        if (srtContent) {
+            // Save SRT file
+            const srtPath = `${workDir}/subtitles.srt`;
+            fs.writeFileSync(srtPath, srtContent, 'utf8');
+            console.log('SRT file created');
+            
+            // With subtitles
+            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -vf "subtitles='${srtPath}':force_style='FontSize=24,PrimaryColour=&Hffffff&,OutlineColour=&H000000&,Outline=2,MarginV=40'" -map 0:v:0 -map 1:a:0 -c:v libx264 -preset ultrafast -crf 23 -c:a aac -b:a 128k "${workDir}/output.mp4"`;
         } else {
-            // Without subtitles - simple mix
-            console.log('Processing without subtitles...');
-            ffmpegCommand = `ffmpeg -i ${workDir}/video.mp4 -i ${workDir}/audio.mp3 -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 ${workDir}/output.mp4`;
+            // Without subtitles
+            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 "${workDir}/output.mp4"`;
         }
 
-        console.log('Running ffmpeg command...');
+        console.log('Running ffmpeg...');
+        console.log(ffmpegCommand);
         
         exec(ffmpegCommand, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-            if (error && srtPath) {
-                console.error('FFmpeg error with subtitles, trying without...');
-                console.error('Error:', stderr);
-                
-                // Fallback to simple mixing without subtitles
-                const fallbackCommand = `ffmpeg -i ${workDir}/video.mp4 -i ${workDir}/audio.mp3 -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 ${workDir}/output.mp4`;
-                
-                exec(fallbackCommand, { maxBuffer: 1024 * 1024 * 10 }, (fallbackError, fallbackStdout, fallbackStderr) => {
-                    if (fallbackError) {
-                        console.error('Fallback also failed:', fallbackError);
-                        console.error('Fallback stderr:', fallbackStderr);
-                        fs.rmSync(workDir, { recursive: true, force: true });
-                        return res.status(500).json({ error: 'Video processing failed', details: fallbackStderr });
-                    }
-                    
-                    console.log('Video processed successfully (without subtitles)');
-                    const videoBuffer = fs.readFileSync(`${workDir}/output.mp4`);
-                    res.set('Content-Type', 'video/mp4');
-                    res.send(videoBuffer);
-                    fs.rmSync(workDir, { recursive: true, force: true });
-                });
-                return;
-            }
-
             if (error) {
-                console.error('FFmpeg error:', error);
-                console.error('stderr:', stderr);
+                console.error('FFmpeg error:', stderr);
+                
+                if (srtContent) {
+                    // Try without subtitles
+                    console.log('Retrying without subtitles...');
+                    const fallbackCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -c:v copy -c:a aac -map 0:v:0 -map 1:a:0 "${workDir}/output.mp4"`;
+                    
+                    exec(fallbackCommand, { maxBuffer: 1024 * 1024 * 10 }, (fallbackError, fallbackStdout, fallbackStderr) => {
+                        if (fallbackError) {
+                            console.error('Fallback failed:', fallbackStderr);
+                            fs.rmSync(workDir, { recursive: true, force: true });
+                            return res.status(500).json({ error: 'Processing failed', details: fallbackStderr });
+                        }
+                        
+                        console.log('Success without subtitles');
+                        const videoBuffer = fs.readFileSync(`${workDir}/output.mp4`);
+                        res.set('Content-Type', 'video/mp4');
+                        res.send(videoBuffer);
+                        fs.rmSync(workDir, { recursive: true, force: true });
+                    });
+                    return;
+                }
+                
                 fs.rmSync(workDir, { recursive: true, force: true });
-                return res.status(500).json({ error: 'Video processing failed', details: stderr });
+                return res.status(500).json({ error: 'Processing failed', details: stderr });
             }
 
-            console.log('Video processed successfully with subtitles!');
+            console.log('Success with subtitles!');
             const videoBuffer = fs.readFileSync(`${workDir}/output.mp4`);
             res.set('Content-Type', 'video/mp4');
             res.send(videoBuffer);
@@ -111,9 +98,8 @@ app.post('/mix', async (req, res) => {
     }
 });
 
-// Health check
 app.get('/', (req, res) => {
-    res.json({ status: 'Mixer service running - v4 with proper SRT subtitles' });
+    res.json({ status: 'Mixer service v5 - clean SRT implementation' });
 });
 
 const PORT = process.env.PORT || 3000;
