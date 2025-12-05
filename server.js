@@ -166,6 +166,7 @@ app.post('/mix', async (req, res) => {
     }
 });
 
+// Health check
 app.get('/', (req, res) => {
     res.json({ status: 'Mixer service v8 - returns R2 URL + duration' });
 });
