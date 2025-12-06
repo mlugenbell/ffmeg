@@ -1,5 +1,5 @@
 const express = require('express');
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const fs = require('fs');
 const https = require('https');
 const app = express();
@@ -47,6 +47,19 @@ app.post('/mix', async (req, res) => {
         await downloadFile(videoUrl, `${workDir}/video.mp4`);
         await downloadFile(audioUrl, `${workDir}/audio.mp3`);
 
+        // Get audio duration
+        let audioDuration;
+        try {
+          const durationOut = execSync(
+            `ffprobe -v error -show_entries format=duration -of default=noprint_wrappers=1:nokey=1 "${workDir}/audio.mp3"`
+          );
+          audioDuration = Math.ceil(parseFloat(durationOut.toString().trim()));
+          console.log(`Detected audio duration: ${audioDuration}s`);
+        } catch (err) {
+          console.error('Could not detect audio duration, using default 70s');
+          audioDuration = 70;
+        }
+
         let ffmpegCommand;
         
         if (srtContent) {
@@ -54,12 +67,13 @@ app.post('/mix', async (req, res) => {
             fs.writeFileSync(srtPath, srtContent, 'utf8');
             console.log('SRT file created');
             
-            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout];[0:v]subtitles='${srtPath}':force_style='FontSize=24,PrimaryColour=&Hffffff&,OutlineColour=&H000000&,Outline=2,MarginV=40'[vout]" -map "[vout]" -map "[aout]" -c:v libx264 -preset ultrafast -crf 28 -c:a aac -b:a 128k "${workDir}/output.mp4"`;
+            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout];[0:v]subtitles='${srtPath}':force_style='FontSize=24,PrimaryColour=&Hffffff&,OutlineColour=&H000000&,Outline=2,MarginV=40'[vout]" -map "[vout]" -map "[aout]" -c:v libx264 -preset ultrafast -crf 35 -vf "scale=1280:720" -c:a aac -b:a 96k -t ${audioDuration} "${workDir}/output.mp4"`;
         } else {
-            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 128k "${workDir}/output.mp4"`;
+            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 35 -vf "scale=1280:720" -c:a aac -b:a 96k -t ${audioDuration} "${workDir}/output.mp4"`;
         }
 
         console.log('Running ffmpeg...');
+        console.log('Command:', ffmpegCommand);
         
         exec(ffmpegCommand, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
             if (error) {
@@ -67,7 +81,7 @@ app.post('/mix', async (req, res) => {
                 
                 if (srtContent) {
                     console.log('Retrying without subtitles...');
-                    const fallbackCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v copy -c:a aac -b:a 128k "${workDir}/output.mp4"`;
+                    const fallbackCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 35 -vf "scale=1280:720" -c:a aac -b:a 96k -t ${audioDuration} "${workDir}/output.mp4"`;
                     
                     exec(fallbackCommand, { maxBuffer: 1024 * 1024 * 10 }, (fallbackError) => {
                         if (fallbackError) {
@@ -103,7 +117,7 @@ app.post('/mix', async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.json({ status: 'Mixer service v7 - returns binary video with higher compression' });
+    res.json({ status: 'Mixer service v9 - high compression for email' });
 });
 
 const PORT = process.env.PORT || 3000;
