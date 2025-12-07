@@ -2,13 +2,9 @@ const express = require('express');
 const { exec, execSync } = require('child_process');
 const fs = require('fs');
 const https = require('https');
-const multer = require('multer');
 const app = express();
 
 app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ extended: true, limit: '50mb' }));
-
-const upload = multer();
 
 function removeDir(dir) {
     if (fs.existsSync(dir)) {
@@ -36,11 +32,8 @@ function downloadFile(url, dest) {
     });
 }
 
-app.post('/mix', upload.none(), async (req, res) => {
-    // Accept both JSON and form-data
-    const videoUrl = req.body.videoUrl;
-    const audioUrl = req.body.audioUrl;
-    const srtContent = req.body.srtContent;
+app.post('/mix', async (req, res) => {
+    const { videoUrl, audioUrl, srtContent } = req.body;
     
     if (!videoUrl || !audioUrl) {
         return res.status(400).json({ error: 'videoUrl and audioUrl required' });
@@ -57,14 +50,17 @@ app.post('/mix', upload.none(), async (req, res) => {
         let ffmpegCommand;
         
         if (srtContent && srtContent.trim().length > 0) {
-            const srtPath = `${workDir}/subtitles.srt`;
-            fs.writeFileSync(srtPath, srtContent, 'utf8');
-            console.log('SRT file created');
+            // Unescape newlines that were escaped for JSON
+            const unescapedSrt = srtContent.replace(/\\n/g, '\n');
             
-            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout];[0:v]subtitles='${srtPath}':force_style='FontSize=24,PrimaryColour=&Hffffff&,OutlineColour=&H000000&,Outline=2,MarginV=40'[vout]" -map "[vout]" -map "[aout]" -c:v libx264 -preset ultrafast -crf 35 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
+            const srtPath = `${workDir}/subtitles.srt`;
+            fs.writeFileSync(srtPath, unescapedSrt, 'utf8');
+            console.log('SRT file created with subtitles');
+            
+            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout];[0:v]subtitles='${srtPath}':force_style='FontSize=24,PrimaryColour=&Hffffff&,OutlineColour=&H000000&,Outline=2,MarginV=40'[vout]" -map "[vout]" -map "[aout]" -c:v libx264 -preset ultrafast -crf 21 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
         } else {
             console.log('No SRT content, proceeding without subtitles');
-            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 32 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
+            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 21 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
         }
 
         console.log('Running ffmpeg...');
@@ -75,7 +71,7 @@ app.post('/mix', upload.none(), async (req, res) => {
                 
                 if (srtContent) {
                     console.log('Retrying without subtitles...');
-                    const fallbackCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 32 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
+                    const fallbackCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 21 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
                     
                     exec(fallbackCommand, { maxBuffer: 1024 * 1024 * 10 }, (fallbackError) => {
                         if (fallbackError) {
@@ -111,7 +107,7 @@ app.post('/mix', upload.none(), async (req, res) => {
 });
 
 app.get('/', (req, res) => {
-    res.json({ status: 'Mixer service v11 - accepts form-data for subtitles' });
+    res.json({ status: 'Mixer service v12 - CRF 21 with subtitle support' });
 });
 
 const PORT = process.env.PORT || 3000;
