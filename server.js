@@ -56,7 +56,7 @@ app.post('/mix', async (req, res) => {
             
             ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout];[0:v]subtitles='${srtPath}':force_style='FontSize=24,PrimaryColour=&Hffffff&,OutlineColour=&H000000&,Outline=2,MarginV=40'[vout]" -map "[vout]" -map "[aout]" -c:v libx264 -preset ultrafast -crf 35 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
         } else {
-            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 35 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
+            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 32 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
         }
 
         console.log('Running ffmpeg...');
@@ -68,7 +68,7 @@ app.post('/mix', async (req, res) => {
                 
                 if (srtContent) {
                     console.log('Retrying without subtitles...');
-                    const fallbackCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 35 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
+                    const fallbackCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 32 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
                     
                     exec(fallbackCommand, { maxBuffer: 1024 * 1024 * 10 }, (fallbackError) => {
                         if (fallbackError) {
