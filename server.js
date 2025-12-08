@@ -1,116 +1,154 @@
 const express = require('express');
-const { exec, execSync } = require('child_process');
+const multer = require('multer');
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const ffmpeg = require('fluent-ffmpeg');
+const ffmpegPath = require('ffmpeg-static');
 const fs = require('fs');
-const https = require('https');
+
+ffmpeg.setFfmpegPath(ffmpegPath);
+
 const app = express();
+const upload = multer({ storage: multer.memoryStorage() });
 
-app.use(express.json({ limit: '50mb' }));
-
-function removeDir(dir) {
-    if (fs.existsSync(dir)) {
-        if (fs.rmSync) {
-            fs.rmSync(dir, { recursive: true, force: true });
-        } else {
-            fs.rmdirSync(dir, { recursive: true });
-        }
-    }
-}
-
-function downloadFile(url, dest) {
-    return new Promise((resolve, reject) => {
-        const file = fs.createWriteStream(dest);
-        https.get(url, (response) => {
-            response.pipe(file);
-            file.on('finish', () => {
-                file.close();
-                resolve();
-            });
-        }).on('error', (err) => {
-            fs.unlink(dest, () => {});
-            reject(err);
-        });
-    });
-}
-
-app.post('/mix', async (req, res) => {
-    const { videoUrl, audioUrl, srtContent } = req.body;
-    
-    if (!videoUrl || !audioUrl) {
-        return res.status(400).json({ error: 'videoUrl and audioUrl required' });
-    }
-
-    const workDir = `/tmp/${Date.now()}`;
-    fs.mkdirSync(workDir, { recursive: true });
-
-    try {
-        console.log('Downloading files...');
-        await downloadFile(videoUrl, `${workDir}/video.mp4`);
-        await downloadFile(audioUrl, `${workDir}/audio.mp3`);
-
-        let ffmpegCommand;
-        
-        if (srtContent && srtContent.trim().length > 0) {
-            // Unescape newlines that were escaped for JSON
-            const unescapedSrt = srtContent.replace(/\\n/g, '\n');
-            
-            const srtPath = `${workDir}/subtitles.srt`;
-            fs.writeFileSync(srtPath, unescapedSrt, 'utf8');
-            console.log('SRT file created with subtitles');
-            
-            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout];[0:v]subtitles='${srtPath}':force_style='FontSize=24,PrimaryColour=&Hffffff&,OutlineColour=&H000000&,Outline=2,MarginV=40'[vout]" -map "[vout]" -map "[aout]" -c:v libx264 -preset ultrafast -crf 29 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
-        } else {
-            console.log('No SRT content, proceeding without subtitles');
-            ffmpegCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 29 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
-        }
-
-        console.log('Running ffmpeg...');
-        
-        exec(ffmpegCommand, { maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-            if (error) {
-                console.error('FFmpeg error:', stderr);
-                
-                if (srtContent) {
-                    console.log('Retrying without subtitles...');
-                    const fallbackCommand = `ffmpeg -y -i "${workDir}/video.mp4" -i "${workDir}/audio.mp3" -filter_complex "[0:a]volume=0.15[bg];[1:a]volume=1.0[vo];[bg][vo]amix=inputs=2:duration=longest[aout]" -map 0:v -map "[aout]" -c:v libx264 -preset ultrafast -crf 29 -vf "scale=1280:720" -c:a aac -b:a 96k -shortest "${workDir}/output.mp4"`;
-                    
-                    exec(fallbackCommand, { maxBuffer: 1024 * 1024 * 10 }, (fallbackError) => {
-                        if (fallbackError) {
-                            removeDir(workDir);
-                            return res.status(500).json({ error: 'Processing failed' });
-                        }
-                        
-                        console.log('Success without subtitles');
-                        const videoBuffer = fs.readFileSync(`${workDir}/output.mp4`);
-                        res.set('Content-Type', 'video/mp4');
-                        res.send(videoBuffer);
-                        removeDir(workDir);
-                    });
-                    return;
-                }
-                
-                removeDir(workDir);
-                return res.status(500).json({ error: 'Processing failed' });
-            }
-
-            console.log('Success!');
-            const videoBuffer = fs.readFileSync(`${workDir}/output.mp4`);
-            res.set('Content-Type', 'video/mp4');
-            res.send(videoBuffer);
-            removeDir(workDir);
-        });
-
-    } catch (error) {
-        console.error('Error:', error);
-        removeDir(workDir);
-        res.status(500).json({ error: 'Processing failed', details: error.message });
-    }
+const s3Client = new S3Client({
+  region: 'auto',
+  endpoint: process.env.R2_ENDPOINT,
+  credentials: {
+    accessKeyId: process.env.R2_ACCESS_KEY_ID,
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY,
+  },
 });
 
-app.get('/', (req, res) => {
-    res.json({ status: 'Mixer service v12 - CRF 21 with subtitle support' });
+// Original audio upload endpoint (keep for backwards compatibility)
+app.post('/upload-audio', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No audio file uploaded' });
+    }
+
+    const fileName = `audio/${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`;
+    
+    await s3Client.send(new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: fileName,
+      Body: req.file.buffer,
+      ContentType: req.file.mimetype,
+    }));
+
+    // Get audio duration
+    const tempPath = `/tmp/temp-${Date.now()}.mp3`;
+    fs.writeFileSync(tempPath, req.file.buffer);
+    
+    const duration = await new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(tempPath, (err, metadata) => {
+        if (err) reject(err);
+        else resolve(metadata.format.duration);
+      });
+    });
+    
+    fs.unlinkSync(tempPath);
+
+    res.json({
+      url: `${process.env.R2_PUBLIC_URL}/${fileName}`,
+      duration: duration
+    });
+
+  } catch (error) {
+    console.error('Upload error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// NEW: Mix voiceover with background music
+app.post('/mix-audio', upload.single('audio'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No audio file uploaded' });
+    }
+
+    const backgroundMusicUrl = 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3';
+    
+    // Download background music
+    const bgResponse = await fetch(backgroundMusicUrl);
+    const bgBuffer = Buffer.from(await bgResponse.arrayBuffer());
+    
+    const bgPath = `/tmp/bg-${Date.now()}.mp3`;
+    const voicePath = `/tmp/voice-${Date.now()}.mp3`;
+    const outputPath = `/tmp/mixed-${Date.now()}.mp3`;
+    
+    fs.writeFileSync(bgPath, bgBuffer);
+    fs.writeFileSync(voicePath, req.file.buffer);
+    
+    console.log('Mixing audio files...');
+    
+    // Mix audio: voiceover at 100%, background at 15%
+    await new Promise((resolve, reject) => {
+      ffmpeg()
+        .input(voicePath)
+        .input(bgPath)
+        .complexFilter([
+          '[0:a]volume=1.0[voice]',
+          '[1:a]volume=0.15[bg]',
+          '[voice][bg]amix=inputs=2:duration=first'
+        ])
+        .audioCodec('libmp3lame')
+        .audioBitrate('192k')
+        .on('end', () => {
+          console.log('Audio mixing complete');
+          resolve();
+        })
+        .on('error', (err) => {
+          console.error('FFMPEG error:', err);
+          reject(err);
+        })
+        .save(outputPath);
+    });
+    
+    // Upload mixed audio to R2
+    const mixedBuffer = fs.readFileSync(outputPath);
+    const fileName = `audio/${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`;
+    
+    console.log('Uploading mixed audio to R2...');
+    
+    await s3Client.send(new PutObjectCommand({
+      Bucket: process.env.R2_BUCKET_NAME,
+      Key: fileName,
+      Body: mixedBuffer,
+      ContentType: 'audio/mpeg'
+    }));
+    
+    // Get duration
+    const duration = await new Promise((resolve, reject) => {
+      ffmpeg.ffprobe(outputPath, (err, metadata) => {
+        if (err) reject(err);
+        else resolve(metadata.format.duration);
+      });
+    });
+    
+    console.log(`Mixed audio uploaded. Duration: ${duration}s`);
+    
+    // Cleanup temp files
+    fs.unlinkSync(bgPath);
+    fs.unlinkSync(voicePath);
+    fs.unlinkSync(outputPath);
+    
+    res.json({
+      url: `${process.env.R2_PUBLIC_URL}/${fileName}`,
+      duration: duration
+    });
+    
+  } catch (error) {
+    console.error('Mix error:', error);
+    res.status(500).json({ error: error.message });
+  }
 });
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
+```
+
+**Then update your n8n HTTP Request1 node URL to:**
+```
+https://r2-upload-service-production.up.railway.app/mix-audio
