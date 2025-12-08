@@ -1,12 +1,15 @@
 {
-  "name": "video-mixer",
+  "name": "ffmpeg-mix-service",
   "version": "1.0.0",
+  "description": "FFmpeg service to mix video with voiceover audio",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "fluent-ffmpeg": "^2.1.2"
+    "express": "^4.18.2"
+  },
+  "engines": {
+    "node": ">=16.0.0"
   }
 }
