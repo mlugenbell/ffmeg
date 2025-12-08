@@ -19,7 +19,7 @@ const s3Client = new S3Client({
   },
 });
 
-// Original audio upload endpoint (keep for backwards compatibility)
+// Original audio upload endpoint
 app.post('/upload-audio', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
@@ -35,7 +35,6 @@ app.post('/upload-audio', upload.single('audio'), async (req, res) => {
       ContentType: req.file.mimetype,
     }));
 
-    // Get audio duration
     const tempPath = `/tmp/temp-${Date.now()}.mp3`;
     fs.writeFileSync(tempPath, req.file.buffer);
     
@@ -59,7 +58,7 @@ app.post('/upload-audio', upload.single('audio'), async (req, res) => {
   }
 });
 
-// NEW: Mix voiceover with background music
+// Mix voiceover with background music
 app.post('/mix-audio', upload.single('audio'), async (req, res) => {
   try {
     if (!req.file) {
@@ -68,7 +67,6 @@ app.post('/mix-audio', upload.single('audio'), async (req, res) => {
 
     const backgroundMusicUrl = 'https://cdn.pixabay.com/download/audio/2022/05/27/audio_1808fbf07a.mp3';
     
-    // Download background music
     const bgResponse = await fetch(backgroundMusicUrl);
     const bgBuffer = Buffer.from(await bgResponse.arrayBuffer());
     
@@ -81,7 +79,6 @@ app.post('/mix-audio', upload.single('audio'), async (req, res) => {
     
     console.log('Mixing audio files...');
     
-    // Mix audio: voiceover at 100%, background at 15%
     await new Promise((resolve, reject) => {
       ffmpeg()
         .input(voicePath)
@@ -104,7 +101,6 @@ app.post('/mix-audio', upload.single('audio'), async (req, res) => {
         .save(outputPath);
     });
     
-    // Upload mixed audio to R2
     const mixedBuffer = fs.readFileSync(outputPath);
     const fileName = `audio/${Date.now()}-${Math.random().toString(36).substring(7)}.mp3`;
     
@@ -117,7 +113,6 @@ app.post('/mix-audio', upload.single('audio'), async (req, res) => {
       ContentType: 'audio/mpeg'
     }));
     
-    // Get duration
     const duration = await new Promise((resolve, reject) => {
       ffmpeg.ffprobe(outputPath, (err, metadata) => {
         if (err) reject(err);
@@ -127,7 +122,6 @@ app.post('/mix-audio', upload.single('audio'), async (req, res) => {
     
     console.log(`Mixed audio uploaded. Duration: ${duration}s`);
     
-    // Cleanup temp files
     fs.unlinkSync(bgPath);
     fs.unlinkSync(voicePath);
     fs.unlinkSync(outputPath);
@@ -147,8 +141,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
 });
-```
-
-**Then update your n8n HTTP Request1 node URL to:**
-```
-https://r2-upload-service-production.up.railway.app/mix-audio
