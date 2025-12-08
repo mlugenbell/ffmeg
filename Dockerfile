@@ -1,11 +1,7 @@
-FROM ubuntu:22.04
+FROM node:18-slim
 
-RUN apt-get update && apt-get install -y \
-    ffmpeg \
-    nodejs \
-    npm \
-    fonts-liberation \
-    fontconfig
+# Install ffmpeg
+RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
@@ -14,4 +10,6 @@ RUN npm install
 
 COPY . .
 
-CMD ["npm", "start"]
+EXPOSE 3000
+
+CMD ["node", "server.js"]
